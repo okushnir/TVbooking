@@ -16,7 +16,7 @@ Storage: SQL database (SQLite locally; point at free Postgres for online).
 import copy
 import zlib
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -27,7 +27,7 @@ from streamlit_calendar import calendar
 # ---------------------------------------------------------------------------
 # CONFIG  — edit these to taste
 # ---------------------------------------------------------------------------
-ROOM_NAME = "TV Room"
+ROOM_NAME = "Meeting Room"
 
 # Admins can cancel ANY booking. Everyone else can only cancel their own.
 # Use the same emails you set under [credentials...] in secrets.
@@ -269,6 +269,9 @@ st.markdown(
       }
       .bk-time { font-size: 1.05rem; font-weight: 600; }
       .bk-meta { opacity: .75; }
+      /* Bigger tap targets for phones */
+      .stButton > button { min-height: 2.7rem; font-size: 1rem; }
+      div[data-testid="stDateInput"] input { min-height: 2.7rem; font-size: 1rem; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -287,8 +290,43 @@ with st.sidebar:
     st.markdown(f"**{me_name}**")
     st.caption(me_email + ("  ·  admin" if is_admin else ""))
     authenticator.logout(button_name="Log out", location="sidebar")
-    st.markdown("---")
-    sel_date = st.date_input("Date", value=date.today(), min_value=date.today())
+
+# ---- Date navigator (mobile-friendly, front and centre) ----
+if "sel_date" not in st.session_state:
+    st.session_state.sel_date = date.today()
+
+nav_prev, nav_date, nav_next = st.columns([1, 2.4, 1])
+with nav_prev:
+    if st.button("◀", use_container_width=True,
+                 disabled=st.session_state.sel_date <= date.today(),
+                 help="Previous day"):
+        st.session_state.sel_date -= timedelta(days=1)
+        st.rerun()
+with nav_next:
+    if st.button("▶", use_container_width=True, help="Next day"):
+        st.session_state.sel_date += timedelta(days=1)
+        st.rerun()
+with nav_date:
+    picked = st.date_input(
+        "Date", value=st.session_state.sel_date, min_value=date.today(),
+        format="DD/MM/YYYY", label_visibility="collapsed",
+    )
+    if picked != st.session_state.sel_date:
+        st.session_state.sel_date = picked
+        st.rerun()
+
+sel_date = st.session_state.sel_date
+day_label = "Today" if sel_date == date.today() else (
+    "Tomorrow" if sel_date == date.today() + timedelta(days=1) else sel_date.strftime("%a"))
+st.markdown(
+    f"<div style='text-align:center;font-size:1.15rem;font-weight:600;margin:2px 0 6px;'>"
+    f"{day_label} · {sel_date:%d %b %Y}</div>",
+    unsafe_allow_html=True,
+)
+if sel_date != date.today():
+    if st.button("↩︎ Back to today", use_container_width=True):
+        st.session_state.sel_date = date.today()
+        st.rerun()
 
 try:
     df = load_bookings()
@@ -330,7 +368,7 @@ for b_s, b_e in BLOCKED_SLOTS:
 calendar(
     events=events,
     options={
-        "initialView": "timeGridWeek",
+        "initialView": "timeGridDay",
         "initialDate": sel_date.isoformat(),
         "slotMinTime": f"{OPEN}:00",
         "slotMaxTime": f"{CLOSE}:00",
@@ -341,13 +379,13 @@ calendar(
         "eventTimeFormat": {"hour": "2-digit", "minute": "2-digit", "hour12": False},
         "slotLabelFormat": {"hour": "2-digit", "minute": "2-digit", "hour12": False},
         "headerToolbar": {
-            "left": "prev,next today",
+            "left": "",
             "center": "title",
-            "right": "timeGridWeek,timeGridDay",
+            "right": "timeGridDay,timeGridWeek",
         },
-        "height": 600,
+        "height": 480,
     },
-    key="calendar",
+    key=f"calendar_{sel_date.isoformat()}",
 )
 
 # ---- This day's status (for me) ----
