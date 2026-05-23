@@ -229,7 +229,12 @@ def overlaps(df_day: pd.DataFrame, start_m: int, end_m: int) -> bool:
 
 
 def color_for(email: str) -> str:
-    return USER_COLORS[zlib.crc32(email.lower().encode()) % len(USER_COLORS)]
+    # Distinct colour per configured user (by position); hash only as fallback.
+    e = email.lower()
+    emails = [u for u, _ in all_users()]
+    if e in emails:
+        return USER_COLORS[emails.index(e) % len(USER_COLORS)]
+    return USER_COLORS[zlib.crc32(e.encode()) % len(USER_COLORS)]
 
 
 def all_users():
