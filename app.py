@@ -17,6 +17,7 @@ import copy
 import zlib
 import uuid
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -27,7 +28,7 @@ from streamlit_calendar import calendar
 # ---------------------------------------------------------------------------
 # CONFIG  — edit these to taste
 # ---------------------------------------------------------------------------
-ROOM_NAME = "Meeting Room"
+ROOM_NAME = "TV Room"
 
 # Admins can cancel ANY booking. Everyone else can only cancel their own.
 # Use the same emails you set under [credentials...] in secrets.
@@ -40,6 +41,7 @@ DAILY_USER_HOURS = 5.0          # max hours each user may book per day
 OPEN = "08:00"                  # earliest bookable time
 CLOSE = "22:30"                 # latest bookable time
 SLOT_MINUTES = 30               # booking granularity
+TIMEZONE = "Asia/Jerusalem"     # local timezone for "today"
 
 # Time ranges that are locked every day and cannot be booked (e.g. reserved).
 BLOCKED_SLOTS = [("14:30", "16:30")]
@@ -160,7 +162,7 @@ def add_booking(b_date: date, email: str, name: str, start: str, end: str):
             "name": name,
             "start": start,
             "end": end,
-            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "created_at": datetime.now(TZ).isoformat(timespec="seconds"),
         })
 
 
@@ -179,6 +181,14 @@ def to_minutes(hhmm: str) -> int:
 
 def fmt(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+TZ = ZoneInfo(TIMEZONE)
+
+
+def today() -> date:
+    """Current date in the app's local timezone (not the UTC server clock)."""
+    return datetime.now(TZ).date()
 
 
 def slot_options():
@@ -293,12 +303,12 @@ with st.sidebar:
 
 # ---- Date navigator (mobile-friendly, front and centre) ----
 if "sel_date" not in st.session_state:
-    st.session_state.sel_date = date.today()
+    st.session_state.sel_date = today()
 
 nav_prev, nav_date, nav_next = st.columns([1, 2.4, 1])
 with nav_prev:
     if st.button("◀", use_container_width=True,
-                 disabled=st.session_state.sel_date <= date.today(),
+                 disabled=st.session_state.sel_date <= today(),
                  help="Previous day"):
         st.session_state.sel_date -= timedelta(days=1)
         st.rerun()
@@ -308,7 +318,7 @@ with nav_next:
         st.rerun()
 with nav_date:
     picked = st.date_input(
-        "Date", value=st.session_state.sel_date, min_value=date.today(),
+        "Date", value=st.session_state.sel_date, min_value=today(),
         format="DD/MM/YYYY", label_visibility="collapsed",
     )
     if picked != st.session_state.sel_date:
@@ -316,16 +326,16 @@ with nav_date:
         st.rerun()
 
 sel_date = st.session_state.sel_date
-day_label = "Today" if sel_date == date.today() else (
-    "Tomorrow" if sel_date == date.today() + timedelta(days=1) else sel_date.strftime("%a"))
+day_label = "Today" if sel_date == today() else (
+    "Tomorrow" if sel_date == today() + timedelta(days=1) else sel_date.strftime("%a"))
 st.markdown(
     f"<div style='text-align:center;font-size:1.15rem;font-weight:600;margin:2px 0 6px;'>"
     f"{day_label} · {sel_date:%d %b %Y}</div>",
     unsafe_allow_html=True,
 )
-if sel_date != date.today():
+if sel_date != today():
     if st.button("↩︎ Back to today", use_container_width=True):
-        st.session_state.sel_date = date.today()
+        st.session_state.sel_date = today()
         st.rerun()
 
 try:

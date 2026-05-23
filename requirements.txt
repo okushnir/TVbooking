@@ -4,3 +4,4 @@ streamlit-authenticator==0.4.2
 pandas>=2.0
 SQLAlchemy>=2.0
 psycopg2-binary>=2.9     # only needed if you use a Postgres URL (Neon/Supabase)
+tzdata>=2024.1
