@@ -37,7 +37,9 @@ ADMINS = [
     "sharonkushnir@gmail.com",
 ]
 
-DAILY_USER_HOURS = 5.0          # max hours each user may book per day
+WEEKDAY_HOURS = 3.0             # max hours per user on Sun–Thu
+WEEKEND_HOURS = 5.0             # max hours per user on the weekend
+WEEKEND_DAYS = {4, 5}           # Python weekday(): Fri=4, Sat=5 (Israeli weekend)
 OPEN = "08:00"                  # earliest bookable time
 CLOSE = "22:30"                 # latest bookable time
 SLOT_MINUTES = 30               # booking granularity
@@ -191,6 +193,11 @@ def today() -> date:
     return datetime.now(TZ).date()
 
 
+def daily_cap(d: date) -> float:
+    """Max hours a user may book on date d (weekend gets more)."""
+    return WEEKEND_HOURS if d.weekday() in WEEKEND_DAYS else WEEKDAY_HOURS
+
+
 def slot_options():
     out, t = [], OPEN_MIN
     while t < CLOSE_MIN:
@@ -295,7 +302,7 @@ st.markdown(
     f"""
     <div class="room-banner">
       <h1>📅 {ROOM_NAME}</h1>
-      <p>Open {OPEN}–{CLOSE} · max {DAILY_USER_HOURS:g} h/day per user · {SLOT_MINUTES}-min slots · locked daily {", ".join(f"{s}–{e}" for s, e in BLOCKED_SLOTS)}</p>
+      <p>Open {OPEN}–{CLOSE} · max {WEEKDAY_HOURS:g} h/day (weekdays), {WEEKEND_HOURS:g} h/day (Fri–Sat) per user · {SLOT_MINUTES}-min slots · locked daily {", ".join(f"{s}–{e}" for s, e in BLOCKED_SLOTS)}</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -406,7 +413,8 @@ calendar(
 # ---- This day's status (for me) ----
 df_day = day_bookings(df, sel_date)
 my_used = minutes_for(df_day, me_email)
-my_remaining = int(DAILY_USER_HOURS * 60) - my_used
+cap_h = daily_cap(sel_date)
+my_remaining = int(cap_h * 60) - my_used
 
 c1, c2, c3 = st.columns(3)
 c1.metric("Your hours today", f"{my_used/60:g} h")
@@ -414,15 +422,15 @@ c2.metric("Your remaining today", f"{my_remaining/60:g} h")
 c3.metric("Total bookings today", len(df_day))
 
 st.progress(
-    min(my_used / (DAILY_USER_HOURS * 60), 1.0),
-    text=f"Your usage: {my_used/60:g} / {DAILY_USER_HOURS:g} h",
+    min(my_used / (cap_h * 60), 1.0),
+    text=f"Your usage: {my_used/60:g} / {cap_h:g} h",
 )
 
 # ---- Booking form ----
 st.subheader(f"Book {ROOM_NAME} — {sel_date:%A %d %b %Y}")
 
 if my_remaining <= 0:
-    st.warning(f"You've reached your {DAILY_USER_HOURS:g} h limit for this day.")
+    st.warning(f"You've reached your {cap_h:g} h limit for this day.")
 else:
     fc1, fc2 = st.columns(2)
     # Don't offer start times that fall inside a locked window
@@ -435,7 +443,7 @@ else:
         [b_s for b_s, _ in blocked_windows() if b_s > start_m0] + [CLOSE_MIN]
     )
     max_dur = min(
-        DAILY_USER_HOURS,
+        cap_h,
         my_remaining / 60,
         (next_block - start_m0) / 60,
     )
@@ -459,9 +467,9 @@ else:
                 st.error(f"That overlaps the locked period ({blocked[0]}–{blocked[1]}).")
             elif end_m > CLOSE_MIN:
                 st.error(f"Booking would end after closing ({CLOSE}).")
-            elif fresh_mine + (end_m - start_m) > DAILY_USER_HOURS * 60:
+            elif fresh_mine + (end_m - start_m) > cap_h * 60:
                 st.error(
-                    f"That exceeds your {DAILY_USER_HOURS:g} h daily limit "
+                    f"That exceeds your {cap_h:g} h daily limit "
                     f"({fresh_mine/60:g} h already booked)."
                 )
             else:
