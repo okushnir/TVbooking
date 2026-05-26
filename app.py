@@ -198,6 +198,18 @@ def daily_cap(d: date) -> float:
     return WEEKEND_HOURS if d.weekday() in WEEKEND_DAYS else WEEKDAY_HOURS
 
 
+def parse_cal_dt(s: str) -> datetime:
+    """Parse a datetime string from the calendar and express it in local TZ.
+
+    streamlit-calendar returns selection times as UTC ISO strings, so we
+    convert tz-aware values into the app's timezone before reading the clock.
+    """
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(TZ)
+    return dt
+
+
 def slot_options():
     out, t = [], OPEN_MIN
     while t < CLOSE_MIN:
@@ -388,6 +400,7 @@ if users:
 # ---- Calendar (all bookings, visible to everyone) ----
 events = [
     {
+        "id": r["id"],
         "title": f"{r['name'] or r['email']}"
                  + ("  (you)" if r["email"].lower() == me_email.lower() else ""),
         "start": f"{r['date']}T{r['start']}:00",
@@ -434,12 +447,16 @@ cal_state = calendar(
     key=f"calendar_{sel_date.isoformat()}",
 )
 
-# ---- Handle a drag-selection on the calendar -> confirm & book ----
-sel = (cal_state or {}).get("select")
-if sel:
+# ---- Handle calendar interactions ----
+state = cal_state or {}
+callback = state.get("callback")
+
+# (a) Drag-selection on the calendar -> confirm & book
+sel = state.get("select")
+if callback == "select" and sel:
     try:
-        s_dt = datetime.fromisoformat(sel["start"])
-        e_dt = datetime.fromisoformat(sel["end"])
+        s_dt = parse_cal_dt(sel["start"])
+        e_dt = parse_cal_dt(sel["end"])
         pick_date = s_dt.date()
         s_m = s_dt.hour * 60 + s_dt.minute
         e_m = e_dt.hour * 60 + e_dt.minute
@@ -462,10 +479,33 @@ if sel:
                     add_booking(pick_date, me_email, me_name, fmt(s_m), fmt(e_m))
                     st.success(f"Booked {fmt(s_m)}–{fmt(e_m)}.")
                     st.rerun()
-            bc2.button("Cancel selection", use_container_width=True,
-                       on_click=st.rerun)
+            bc2.button("Cancel selection", use_container_width=True, on_click=st.rerun)
     except (KeyError, ValueError):
         pass
+
+# (b) Tap an event -> cancel it (own booking, or any if admin)
+if callback == "eventClick":
+    ev = (state.get("eventClick") or {}).get("event", {})
+    bid = ev.get("id")
+    row = df[df["id"] == bid]
+    if bid and not row.empty:
+        r = row.iloc[0]
+        mine = r["email"].lower() == me_email.lower()
+        owner = "your booking" if mine else f"{r['name'] or r['email']}'s booking"
+        st.markdown(
+            f"<div style='text-align:center;font-weight:600;margin-top:6px;'>"
+            f"{r['start']}–{r['end']} · {owner}</div>",
+            unsafe_allow_html=True,
+        )
+        if mine or is_admin:
+            xc1, xc2 = st.columns(2)
+            if xc1.button("🗑️ Cancel this booking", type="primary", use_container_width=True):
+                delete_booking(bid)
+                st.success("Booking cancelled.")
+                st.rerun()
+            xc2.button("Keep it", use_container_width=True, on_click=st.rerun)
+        else:
+            st.info("You can only cancel your own bookings.")
 
 # ---- This day's status (for me) ----
 df_day = day_bookings(df, sel_date)
@@ -485,7 +525,7 @@ st.progress(
 
 # ---- Booking form ----
 st.subheader(f"Book {ROOM_NAME} — {sel_date:%A %d %b %Y}")
-st.caption("Tip: drag across the calendar above to pick a time, or use the form below.")
+st.caption("Tip: drag across the calendar to book a time, or tap a booking to cancel it.")
 
 if my_remaining <= 0:
     st.warning(f"You've reached your {cap_h:g} h limit for this day.")
