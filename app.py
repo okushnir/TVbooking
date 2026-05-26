@@ -219,6 +219,26 @@ def hits_blocked(start_m: int, end_m: int):
     return None
 
 
+def validate_booking(b_date, email, start_m, end_m):
+    """Check a proposed booking against fresh data. Returns error string or None."""
+    if end_m <= start_m:
+        return "Pick an end time after the start time."
+    if start_m < OPEN_MIN or end_m > CLOSE_MIN:
+        return f"Bookings must be within {OPEN}–{CLOSE}."
+    blocked = hits_blocked(start_m, end_m)
+    if blocked:
+        return f"That overlaps the locked period ({blocked[0]}–{blocked[1]})."
+    fresh_day = day_bookings(load_bookings(), b_date)
+    if overlaps(fresh_day, start_m, end_m):
+        return "That overlaps an existing booking. Pick another slot."
+    cap = daily_cap(b_date)
+    fresh_mine = minutes_for(fresh_day, email)
+    if fresh_mine + (end_m - start_m) > cap * 60:
+        return (f"That exceeds your {cap:g} h daily limit "
+                f"({fresh_mine/60:g} h already booked).")
+    return None
+
+
 def day_bookings(df: pd.DataFrame, b_date: date) -> pd.DataFrame:
     return df if df.empty else df[df["date"] == b_date.isoformat()].copy()
 
@@ -387,7 +407,7 @@ for b_s, b_e in BLOCKED_SLOTS:
         "display": "background",
         "color": "#64748b",
     })
-calendar(
+cal_state = calendar(
     events=events,
     options={
         "initialView": "timeGridDay",
@@ -395,9 +415,13 @@ calendar(
         "slotMinTime": f"{OPEN}:00",
         "slotMaxTime": f"{CLOSE}:00",
         "slotDuration": f"00:{SLOT_MINUTES:02d}:00",
+        "snapDuration": f"00:{SLOT_MINUTES:02d}:00",
         "allDaySlot": False,
         "nowIndicator": True,
         "expandRows": True,
+        "selectable": True,
+        "selectMirror": True,
+        "selectOverlap": False,
         "eventTimeFormat": {"hour": "2-digit", "minute": "2-digit", "hour12": False},
         "slotLabelFormat": {"hour": "2-digit", "minute": "2-digit", "hour12": False},
         "headerToolbar": {
@@ -409,6 +433,39 @@ calendar(
     },
     key=f"calendar_{sel_date.isoformat()}",
 )
+
+# ---- Handle a drag-selection on the calendar -> confirm & book ----
+sel = (cal_state or {}).get("select")
+if sel:
+    try:
+        s_dt = datetime.fromisoformat(sel["start"])
+        e_dt = datetime.fromisoformat(sel["end"])
+        pick_date = s_dt.date()
+        s_m = s_dt.hour * 60 + s_dt.minute
+        e_m = e_dt.hour * 60 + e_dt.minute
+        err = validate_booking(pick_date, me_email, s_m, e_m)
+        st.markdown(
+            f"<div style='text-align:center;font-weight:600;margin-top:6px;'>"
+            f"Selected: {pick_date:%a %d %b} · {fmt(s_m)}–{fmt(e_m)} "
+            f"({(e_m-s_m)/60:g} h)</div>",
+            unsafe_allow_html=True,
+        )
+        if err:
+            st.error(err)
+        else:
+            bc1, bc2 = st.columns(2)
+            if bc1.button("✅ Confirm booking", type="primary", use_container_width=True):
+                again = validate_booking(pick_date, me_email, s_m, e_m)
+                if again:
+                    st.error(again)
+                else:
+                    add_booking(pick_date, me_email, me_name, fmt(s_m), fmt(e_m))
+                    st.success(f"Booked {fmt(s_m)}–{fmt(e_m)}.")
+                    st.rerun()
+            bc2.button("Cancel selection", use_container_width=True,
+                       on_click=st.rerun)
+    except (KeyError, ValueError):
+        pass
 
 # ---- This day's status (for me) ----
 df_day = day_bookings(df, sel_date)
@@ -428,6 +485,7 @@ st.progress(
 
 # ---- Booking form ----
 st.subheader(f"Book {ROOM_NAME} — {sel_date:%A %d %b %Y}")
+st.caption("Tip: drag across the calendar above to pick a time, or use the form below.")
 
 if my_remaining <= 0:
     st.warning(f"You've reached your {cap_h:g} h limit for this day.")
@@ -455,23 +513,9 @@ else:
         if st.button("Book it", type="primary"):
             start_m = to_minutes(start_choice)
             end_m = start_m + int(duration * 60)
-
-            # Re-read fresh right before writing to avoid race conditions
-            fresh_day = day_bookings(load_bookings(), sel_date)
-            fresh_mine = minutes_for(fresh_day, me_email)
-
-            blocked = hits_blocked(start_m, end_m)
-            if overlaps(fresh_day, start_m, end_m):
-                st.error("That overlaps an existing booking. Pick another slot.")
-            elif blocked:
-                st.error(f"That overlaps the locked period ({blocked[0]}–{blocked[1]}).")
-            elif end_m > CLOSE_MIN:
-                st.error(f"Booking would end after closing ({CLOSE}).")
-            elif fresh_mine + (end_m - start_m) > cap_h * 60:
-                st.error(
-                    f"That exceeds your {cap_h:g} h daily limit "
-                    f"({fresh_mine/60:g} h already booked)."
-                )
+            err = validate_booking(sel_date, me_email, start_m, end_m)
+            if err:
+                st.error(err)
             else:
                 add_booking(sel_date, me_email, me_name, fmt(start_m), fmt(end_m))
                 st.success(f"Booked {start_choice}–{fmt(end_m)}.")
