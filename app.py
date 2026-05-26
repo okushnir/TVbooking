@@ -105,6 +105,12 @@ def login():
 authenticator, me_email, me_name = login()
 is_admin = me_email in [a.lower() for a in ADMINS]
 
+# streamlit-calendar renders blank on its first mount in a session; force one
+# automatic rerun on first load so it paints without manual navigation.
+if not st.session_state.get("_calendar_warmed"):
+    st.session_state["_calendar_warmed"] = True
+    st.rerun()
+
 # ---------------------------------------------------------------------------
 # DATABASE BACKEND (SQLAlchemy)
 #   Default: local SQLite file (bookings.db). For persistent ONLINE storage,
